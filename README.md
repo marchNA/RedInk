@@ -228,6 +228,13 @@ providers:
     type: google_gemini
     api_key: AIzaxxxxxxxxxxxxxxxxxxxxxxxxx
     model: gemini-2.0-flash
+
+  # DeepSeek 官方 API（OpenAI 兼容）
+  deepseek:
+    type: openai_compatible
+    api_key: sk-xxxxxxxxxxxxxxxxxxxx
+    base_url: https://api.deepseek.com/v1
+    model: deepseek-chat
 ```
 
 ### 图片生成配置
