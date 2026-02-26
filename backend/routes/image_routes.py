@@ -15,6 +15,8 @@ import base64
 import logging
 from flask import Blueprint, request, jsonify, Response, send_file
 from backend.services.image import get_image_service
+from backend.generators.factory import ImageGeneratorFactory
+from backend.config import Config
 from .utils import log_request, log_error
 
 logger = logging.getLogger(__name__)
@@ -391,6 +393,83 @@ def create_image_blueprint():
             "message": "服务正常运行"
         }), 200
 
+    # ==================== 调试生图 ====================
+
+    @image_bp.route('/debug-image/generate', methods=['POST'])
+    def debug_generate_image():
+        """
+        调试生图接口（使用当前激活图片供应商配置）
+
+        支持：
+        - system_prompt: system 角色文本（可选）
+        - user_prompt: user 角色文本（必填）
+        - user_images: user 角色图片文件列表（可选）
+
+        请求格式：
+        1. multipart/form-data（推荐）
+        2. application/json（user_images 使用 base64 数组）
+        """
+        try:
+            system_prompt, user_prompt, user_images = _parse_debug_image_request()
+
+            if not user_prompt:
+                return jsonify({
+                    "success": False,
+                    "error": "参数错误：user_prompt 不能为空"
+                }), 400
+
+            active_provider = Config.get_active_image_provider()
+            provider_config = Config.get_image_provider_config(active_provider)
+            provider_type = provider_config.get('type', active_provider)
+            generator = ImageGeneratorFactory.create(provider_type, provider_config)
+
+            merged_prompt = _build_debug_prompt(system_prompt, user_prompt)
+            model = provider_config.get('model')
+            image_kwargs = {}
+
+            if provider_type == 'google_genai':
+                image_kwargs['model'] = model or 'gemini-3-pro-image-preview'
+                image_kwargs['aspect_ratio'] = provider_config.get('default_aspect_ratio', '3:4')
+                if user_images:
+                    image_kwargs['reference_image'] = user_images[0]
+            elif provider_type == 'image_api':
+                image_kwargs['model'] = model
+                image_kwargs['aspect_ratio'] = provider_config.get('default_aspect_ratio', '3:4')
+                if user_images:
+                    image_kwargs['reference_images'] = user_images
+                image_kwargs['system_prompt'] = system_prompt
+                image_kwargs['user_prompt'] = user_prompt
+            else:
+                image_kwargs['model'] = model
+                image_kwargs['size'] = provider_config.get('size', '1024x1024')
+                endpoint_type = (provider_config.get('endpoint_type') or '').lower()
+                if 'chat' in endpoint_type or 'completions' in endpoint_type:
+                    image_kwargs['system_prompt'] = system_prompt
+                    image_kwargs['user_prompt'] = user_prompt
+                    if user_images:
+                        image_kwargs['user_images'] = user_images
+
+            image_data = generator.generate_image(merged_prompt, **image_kwargs)
+            image_b64 = base64.b64encode(image_data).decode('utf-8')
+
+            return jsonify({
+                "success": True,
+                "provider": {
+                    "active_provider": active_provider,
+                    "type": provider_type,
+                    "model": model,
+                    "endpoint_type": provider_config.get('endpoint_type', '/v1/images/generations')
+                },
+                "image_base64": f"data:image/png;base64,{image_b64}"
+            }), 200
+
+        except Exception as e:
+            log_error('/debug-image/generate', e)
+            return jsonify({
+                "success": False,
+                "error": f"调试生图失败：{str(e)}"
+            }), 500
+
     return image_bp
 
 
@@ -417,3 +496,36 @@ def _parse_base64_images(images_base64: list) -> list:
         images.append(base64.b64decode(img_b64))
 
     return images
+
+
+def _parse_debug_image_request():
+    """
+    解析调试生图请求，返回 system/user 文本与 user 图片列表（二进制）
+    """
+    if request.content_type and 'multipart/form-data' in request.content_type:
+        system_prompt = (request.form.get('system_prompt') or '').strip()
+        user_prompt = (request.form.get('user_prompt') or '').strip()
+        user_images = []
+
+        if 'user_images' in request.files:
+            files = request.files.getlist('user_images')
+            for file in files:
+                if file and file.filename:
+                    user_images.append(file.read())
+
+        return system_prompt, user_prompt, user_images
+
+    data = request.get_json() or {}
+    system_prompt = (data.get('system_prompt') or '').strip()
+    user_prompt = (data.get('user_prompt') or '').strip()
+    user_images = _parse_base64_images(data.get('user_images', []))
+    return system_prompt, user_prompt, user_images
+
+
+def _build_debug_prompt(system_prompt: str, user_prompt: str) -> str:
+    """
+    构建调试用提示词（用于不支持 role 多消息的供应商）
+    """
+    if system_prompt:
+        return f"【System 指令】\n{system_prompt}\n\n【User 请求】\n{user_prompt}"
+    return user_prompt

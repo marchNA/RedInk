@@ -42,9 +42,9 @@ def create_outline_blueprint():
 
         try:
             # 解析请求数据
-            topic, images = _parse_outline_request()
+            topic, images, input_mode = _parse_outline_request()
 
-            log_request('/outline', {'topic': topic, 'images': images})
+            log_request('/outline', {'topic': topic, 'images': images, 'input_mode': input_mode})
 
             # 验证必填参数
             if not topic:
@@ -54,10 +54,20 @@ def create_outline_blueprint():
                     "error": "参数错误：topic 不能为空。\n请提供要生成图文的主题内容。"
                 }), 400
 
+            if input_mode not in ('topic', 'free_text'):
+                return jsonify({
+                    "success": False,
+                    "error": "参数错误：input_mode 仅支持 topic 或 free_text"
+                }), 400
+
             # 调用大纲生成服务
-            logger.info(f"🔄 开始生成大纲，主题: {topic[:50]}...")
+            logger.info(f"🔄 开始生成大纲，模式={input_mode}, 输入: {topic[:50]}...")
             outline_service = get_outline_service()
-            result = outline_service.generate_outline(topic, images if images else None)
+            result = outline_service.generate_outline(
+                topic,
+                images if images else None,
+                input_mode=input_mode
+            )
 
             # 记录结果
             elapsed = time.time() - start_time
@@ -88,11 +98,12 @@ def _parse_outline_request():
     2. application/json - 用于 base64 图片
 
     返回：
-        tuple: (topic, images) - 主题和图片列表
+        tuple: (topic, images, input_mode) - 主题、图片列表、输入模式
     """
     # 检查是否是 multipart/form-data（带图片文件）
     if request.content_type and 'multipart/form-data' in request.content_type:
         topic = request.form.get('topic')
+        input_mode = request.form.get('input_mode', 'topic')
         images = []
 
         # 获取上传的图片文件
@@ -103,11 +114,12 @@ def _parse_outline_request():
                     image_data = file.read()
                     images.append(image_data)
 
-        return topic, images
+        return topic, images, input_mode
 
     # JSON 请求（无图片或 base64 图片）
-    data = request.get_json()
+    data = request.get_json() or {}
     topic = data.get('topic')
+    input_mode = data.get('input_mode', 'topic')
     images = []
 
     # 支持 base64 格式的图片
@@ -119,4 +131,4 @@ def _parse_outline_request():
                 img_b64 = img_b64.split(',')[1]
             images.append(base64.b64decode(img_b64))
 
-    return topic, images
+    return topic, images, input_mode

@@ -63,6 +63,9 @@ def create_history_blueprint():
             topic = data.get('topic')
             outline = data.get('outline')
             task_id = data.get('task_id')
+            content = data.get('content')
+            input_mode = data.get('input_mode', 'topic')
+            raw_input_text = data.get('raw_input_text', '')
 
             if not topic or not outline:
                 return jsonify({
@@ -70,8 +73,21 @@ def create_history_blueprint():
                     "error": "参数错误：topic 和 outline 不能为空。\n请提供主题和大纲内容。"
                 }), 400
 
+            if input_mode not in ('topic', 'free_text'):
+                return jsonify({
+                    "success": False,
+                    "error": "参数错误：input_mode 仅支持 topic 或 free_text"
+                }), 400
+
             history_service = get_history_service()
-            record_id = history_service.create_record(topic, outline, task_id)
+            record_id = history_service.create_record(
+                topic=topic,
+                outline=outline,
+                task_id=task_id,
+                content=content,
+                input_mode=input_mode,
+                raw_input_text=raw_input_text
+            )
 
             return jsonify({
                 "success": True,
@@ -228,6 +244,8 @@ def create_history_blueprint():
         """
         try:
             data = request.get_json()
+            title = data.get('title')
+            content = data.get('content')
             outline = data.get('outline')
             images = data.get('images')
             status = data.get('status')
@@ -236,6 +254,8 @@ def create_history_blueprint():
             history_service = get_history_service()
             success = history_service.update_record(
                 record_id,
+                title=title,
+                content=content,
                 outline=outline,
                 images=images,
                 status=status,

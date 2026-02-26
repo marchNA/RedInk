@@ -7,6 +7,8 @@ API 路由模块
 - history_routes: 历史记录 CRUD API
 - config_routes: 配置管理 API
 - content_routes: 内容生成相关 API（标题、文案、标签）
+- xiaohongshu_routes: 小红书登录和发布 API
+- brainstorm_routes: 创意风暴对话和成稿 API
 
 所有路由都注册到统一的 /api 前缀下
 """
@@ -28,6 +30,8 @@ def create_api_blueprint():
     from .history_routes import create_history_blueprint
     from .config_routes import create_config_blueprint
     from .content_routes import create_content_blueprint
+    from .xiaohongshu_routes import create_xiaohongshu_blueprint
+    from .brainstorm_routes import create_brainstorm_blueprint
 
     # 创建主 API 蓝图
     api_bp = Blueprint('api', __name__, url_prefix='/api')
@@ -38,6 +42,8 @@ def create_api_blueprint():
     api_bp.register_blueprint(create_history_blueprint())
     api_bp.register_blueprint(create_config_blueprint())
     api_bp.register_blueprint(create_content_blueprint())
+    api_bp.register_blueprint(create_xiaohongshu_blueprint())
+    api_bp.register_blueprint(create_brainstorm_blueprint())
 
     return api_bp
 

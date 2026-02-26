@@ -12,6 +12,7 @@ import yaml
 from pathlib import Path
 from typing import Dict, List, Any, Optional
 from backend.utils.text_client import get_text_chat_client
+from backend.utils.title_utils import truncate_title, truncate_titles
 
 logger = logging.getLogger(__name__)
 
@@ -185,6 +186,9 @@ class ContentService:
             # 确保 titles 是列表
             if isinstance(titles, str):
                 titles = [titles]
+            titles = truncate_titles(titles)
+            if not titles:
+                titles = [truncate_title(topic)]
 
             # 确保 tags 是列表
             if isinstance(tags, str):

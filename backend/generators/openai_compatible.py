@@ -1,9 +1,10 @@
 """OpenAI 兼容接口图片生成器"""
 import logging
 import base64
-from typing import Dict, Any
+from typing import Dict, Any, Optional, List
 import requests
 from .base import ImageGeneratorBase
+from ..utils.image_compressor import compress_image
 
 logger = logging.getLogger(__name__)
 
@@ -78,7 +79,14 @@ class OpenAICompatibleGenerator(ImageGeneratorBase):
 
         # 根据端点路径决定使用哪种 API 方式
         if 'chat' in self.endpoint_type or 'completions' in self.endpoint_type:
-            return self._generate_via_chat_api(prompt, size, model)
+            return self._generate_via_chat_api(
+                prompt,
+                size,
+                model,
+                system_prompt=kwargs.get('system_prompt'),
+                user_prompt=kwargs.get('user_prompt'),
+                user_images=kwargs.get('user_images'),
+            )
         else:
             # 默认使用 images API
             return self._generate_via_images_api(prompt, size, model, quality)
@@ -181,37 +189,66 @@ class OpenAICompatibleGenerator(ImageGeneratorBase):
         self,
         prompt: str,
         size: str,
-        model: str
+        model: str,
+        use_modalities: bool = True,
+        system_prompt: Optional[str] = None,
+        user_prompt: Optional[str] = None,
+        user_images: Optional[List[bytes]] = None
     ) -> bytes:
         """
         通过 chat/completions 端点生成图片
 
         支持多种返回格式：
-        1. Markdown 图片链接: ![xxx](url) - 即梦、部分中转站使用
-        2. Base64 data URL: data:image/xxx;base64,xxx
-        3. 纯图片 URL
+        1. modalities 模式 (OpenRouter): message.images[] 包含图片数据
+        2. Markdown 图片链接: ![xxx](url) - 即梦、部分中转站使用
+        3. Base64 data URL: data:image/xxx;base64,xxx
+        4. 纯图片 URL
         """
         # 确保端点以 / 开头
         endpoint = self.endpoint_type if self.endpoint_type.startswith('/') else '/' + self.endpoint_type
         url = f"{self.base_url}{endpoint}"
-        logger.info(f"Chat API 生成图片: {url}, model={model}")
+        logger.info(f"Chat API 生成图片: {url}, model={model}, use_modalities={use_modalities}")
 
         headers = {
             "Authorization": f"Bearer {self.api_key}",
             "Content-Type": "application/json"
         }
 
+        messages = []
+        if system_prompt:
+            messages.append({
+                "role": "system",
+                "content": system_prompt
+            })
+
+        user_text = (user_prompt or prompt or '').strip()
+        user_content: Any = user_text
+
+        if user_images:
+            user_content = [{"type": "text", "text": user_text or "请基于以下图片生成图片"}]
+            for image_data in user_images:
+                compressed_img = compress_image(image_data, max_size_kb=200)
+                image_b64 = base64.b64encode(compressed_img).decode('utf-8')
+                user_content.append({
+                    "type": "image_url",
+                    "image_url": {"url": f"data:image/png;base64,{image_b64}"}
+                })
+
+        messages.append({
+            "role": "user",
+            "content": user_content
+        })
+
         payload = {
             "model": model,
-            "messages": [
-                {
-                    "role": "user",
-                    "content": prompt
-                }
-            ],
+            "messages": messages,
             "max_tokens": 4096,
             "temperature": 1.0
         }
+
+        # OpenRouter 图片生成需要添加 modalities 参数
+        if use_modalities:
+            payload["modalities"] = ["image", "text"]
 
         response = requests.post(url, headers=headers, json=payload, timeout=300)
 
@@ -250,24 +287,52 @@ class OpenAICompatibleGenerator(ImageGeneratorBase):
         # 解析响应
         if "choices" in result and len(result["choices"]) > 0:
             choice = result["choices"][0]
-            if "message" in choice and "content" in choice["message"]:
-                content = choice["message"]["content"]
+            message = choice.get("message", {})
+
+            # 1. OpenRouter modalities 模式：message.images[] 包含图片数据
+            if "images" in message and message["images"]:
+                logger.info(f"检测到 OpenRouter modalities 图片模式，共 {len(message['images'])} 张图片")
+                first_image = message["images"][0]
+                if "image_url" in first_image:
+                    image_url = first_image["image_url"]
+                    if isinstance(image_url, dict) and "url" in image_url:
+                        url = image_url["url"]
+                        # 可能是 base64 data URL 或普通 URL
+                        if url.startswith("data:"):
+                            logger.info("检测到 Base64 图片数据 (modalities)")
+                            base64_data = url.split(",")[1]
+                            return base64.b64decode(base64_data)
+                        else:
+                            logger.info("检测到图片 URL (modalities)")
+                            return self._download_image(url)
+                    elif isinstance(image_url, str):
+                        # 直接是 URL 字符串
+                        if image_url.startswith("data:"):
+                            logger.info("检测到 Base64 图片数据 (modalities)")
+                            base64_data = image_url.split(",")[1]
+                            return base64.b64decode(base64_data)
+                        else:
+                            return self._download_image(image_url)
+
+            # 2. 普通文本响应模式
+            if "content" in message:
+                content = message["content"]
 
                 if isinstance(content, str):
-                    # 1. 尝试解析 Markdown 图片链接: ![xxx](url)
+                    # 2.1 尝试解析 Markdown 图片链接: ![xxx](url)
                     image_urls = self._extract_markdown_image_urls(content)
                     if image_urls:
                         # 下载第一张图片
                         logger.info(f"从 Markdown 提取到 {len(image_urls)} 张图片，下载第一张...")
                         return self._download_image(image_urls[0])
 
-                    # 2. 尝试解析 Base64 data URL
+                    # 2.2 尝试解析 Base64 data URL
                     if content.startswith("data:image"):
                         logger.info("检测到 Base64 图片数据")
                         base64_data = content.split(",")[1]
                         return base64.b64decode(base64_data)
 
-                    # 3. 尝试作为纯 URL 处理
+                    # 2.3 尝试作为纯 URL 处理
                     if content.startswith("http://") or content.startswith("https://"):
                         logger.info("检测到图片 URL")
                         return self._download_image(content.strip())

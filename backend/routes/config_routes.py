@@ -19,6 +19,7 @@ logger = logging.getLogger(__name__)
 CONFIG_DIR = Path(__file__).parent.parent.parent
 IMAGE_CONFIG_PATH = CONFIG_DIR / 'image_providers.yaml'
 TEXT_CONFIG_PATH = CONFIG_DIR / 'text_providers.yaml'
+IMAGE_ENDPOINT_OPTIONS = {'/v1/images/generations', '/v1/chat/completions'}
 
 
 def create_config_blueprint():
@@ -216,6 +217,20 @@ def _update_provider_config(config_path: Path, new_data: dict):
             # 移除不需要保存的字段
             new_provider_config.pop('api_key_env', None)
             new_provider_config.pop('api_key_masked', None)
+
+            # 图片服务商端点白名单校验（仅 image_api 类型）
+            if config_path == IMAGE_CONFIG_PATH and new_provider_config.get('type') == 'image_api':
+                endpoint = new_provider_config.get('endpoint_type', '/v1/images/generations')
+                if endpoint == 'images':
+                    endpoint = '/v1/images/generations'
+                elif endpoint == 'chat':
+                    endpoint = '/v1/chat/completions'
+                if endpoint not in IMAGE_ENDPOINT_OPTIONS:
+                    raise ValueError(
+                        "图片服务商 endpoint_type 仅支持 "
+                        "/v1/images/generations 或 /v1/chat/completions"
+                    )
+                new_provider_config['endpoint_type'] = endpoint
 
         existing_config['providers'] = new_providers
 

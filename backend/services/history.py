@@ -12,6 +12,7 @@ from datetime import datetime
 from typing import Dict, List, Optional, Any
 from pathlib import Path
 from enum import Enum
+from backend.utils.title_utils import truncate_title, truncate_titles
 
 
 class RecordStatus:
@@ -90,7 +91,10 @@ class HistoryService:
         self,
         topic: str,
         outline: Dict,
-        task_id: Optional[str] = None
+        task_id: Optional[str] = None,
+        content: Optional[Dict] = None,
+        input_mode: str = "topic",
+        raw_input_text: str = ""
     ) -> str:
         """
         创建新的历史记录
@@ -111,14 +115,29 @@ class HistoryService:
         # 生成唯一记录 ID
         record_id = str(uuid.uuid4())
         now = datetime.now().isoformat()
+        display_title = truncate_title(topic)
+        if input_mode == "free_text":
+            display_title = f"未命名草稿 {datetime.now().strftime('%m-%d %H:%M')}"
+        if content and isinstance(content, dict):
+            content_titles = truncate_titles(content.get("titles", []))
+            if content_titles:
+                display_title = content_titles[0]
+                content["titles"] = content_titles
 
         # 创建完整的记录对象
         record = {
             "id": record_id,
-            "title": topic,
+            "title": display_title,
             "created_at": now,
             "updated_at": now,
+            "input_mode": input_mode,
+            "raw_input_text": raw_input_text if input_mode == "free_text" else "",
             "outline": outline,  # 保存完整的大纲数据
+            "content": content or {
+                "titles": [],
+                "copywriting": "",
+                "tags": []
+            },
             "images": {
                 "task_id": task_id,
                 "generated": []  # 初始无生成图片
@@ -136,7 +155,7 @@ class HistoryService:
         index = self._load_index()
         index["records"].insert(0, {
             "id": record_id,
-            "title": topic,
+            "title": display_title,
             "created_at": now,
             "updated_at": now,
             "status": RecordStatus.DRAFT,  # 索引中也记录状态
@@ -195,6 +214,8 @@ class HistoryService:
     def update_record(
         self,
         record_id: str,
+        title: Optional[str] = None,
+        content: Optional[Dict] = None,
         outline: Optional[Dict] = None,
         images: Optional[Dict] = None,
         status: Optional[str] = None,
@@ -233,6 +254,20 @@ class HistoryService:
         now = datetime.now().isoformat()
         record["updated_at"] = now
 
+        # 更新标题
+        if title is not None:
+            record["title"] = truncate_title(title)
+
+        # 更新文案内容（标题备选、正文、标签）
+        if content is not None:
+            if isinstance(content, dict):
+                content_titles = truncate_titles(content.get("titles", []))
+                if content_titles:
+                    content["titles"] = content_titles
+                    if title is None:
+                        record["title"] = content_titles[0]
+            record["content"] = content
+
         # 更新大纲内容（支持修改大纲）
         if outline is not None:
             record["outline"] = outline
@@ -263,6 +298,10 @@ class HistoryService:
                 # 更新状态
                 if status:
                     idx_record["status"] = status
+
+                # 更新标题（用于历史列表展示）
+                if title is not None or content is not None:
+                    idx_record["title"] = record.get("title", idx_record.get("title"))
 
                 # 更新缩略图
                 if thumbnail:

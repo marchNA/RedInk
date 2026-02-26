@@ -2,6 +2,7 @@
 import logging
 import base64
 import requests
+import re
 from typing import Dict, Any, Optional, List, Union
 from .base import ImageGeneratorBase
 from ..utils.image_compressor import compress_image
@@ -88,7 +89,15 @@ class ImageApiGenerator(ImageGeneratorBase):
 
         # 根据端点类型选择不同的生成方式
         if 'chat' in self.endpoint_type or 'completions' in self.endpoint_type:
-            return self._generate_via_chat_api(prompt, aspect_ratio, model, reference_image, reference_images)
+            return self._generate_via_chat_api(
+                prompt,
+                aspect_ratio,
+                model,
+                reference_image,
+                reference_images,
+                system_prompt=kwargs.get('system_prompt'),
+                user_prompt=kwargs.get('user_prompt')
+            )
         else:
             return self._generate_via_images_api(prompt, aspect_ratio, model, reference_image, reference_images)
 
@@ -198,18 +207,19 @@ class ImageApiGenerator(ImageGeneratorBase):
         aspect_ratio: str,
         model: str,
         reference_image: Optional[bytes] = None,
-        reference_images: Optional[List[bytes]] = None
+        reference_images: Optional[List[bytes]] = None,
+        system_prompt: Optional[str] = None,
+        user_prompt: Optional[str] = None
     ) -> bytes:
         """通过 /v1/chat/completions 端点生成图片（如即梦 API）"""
-        import re
-
         headers = {
             "Authorization": f"Bearer {self.api_key}",
             "Content-Type": "application/json"
         }
 
         # 构建用户消息内容
-        user_content: Any = prompt
+        user_text = (user_prompt or prompt or '').strip()
+        user_content: Any = user_text
 
         # 收集所有参考图片
         all_reference_images = []
@@ -221,7 +231,7 @@ class ImageApiGenerator(ImageGeneratorBase):
         # 如果有参考图片，构建多模态消息
         if all_reference_images:
             logger.debug(f"  添加 {len(all_reference_images)} 张参考图片到 chat 消息")
-            content_parts = [{"type": "text", "text": prompt}]
+            content_parts = [{"type": "text", "text": user_text or "请基于以下图片生成图片"}]
 
             for idx, img_data in enumerate(all_reference_images):
                 compressed_img = compress_image(img_data, max_size_kb=200)
@@ -234,9 +244,15 @@ class ImageApiGenerator(ImageGeneratorBase):
 
             user_content = content_parts
 
+        messages = []
+        if system_prompt:
+            messages.append({"role": "system", "content": system_prompt})
+
+        messages.append({"role": "user", "content": user_content})
+
         payload = {
             "model": model,
-            "messages": [{"role": "user", "content": user_content}],
+            "messages": messages,
             "max_tokens": 4096,
             "temperature": 1.0
         }
@@ -277,38 +293,14 @@ class ImageApiGenerator(ImageGeneratorBase):
         result = response.json()
         logger.debug(f"Chat API 响应: {str(result)[:500]}")
 
-        # 解析响应
+        # 动态解析：根据 message 字段结构自动选择解析方式
         if "choices" in result and len(result["choices"]) > 0:
             choice = result["choices"][0]
-            if "message" in choice and "content" in choice["message"]:
-                content = choice["message"]["content"]
-
-                if isinstance(content, str):
-                    # Markdown 图片链接: ![xxx](url)
-                    pattern = r'!\[.*?\]\((https?://[^\s\)]+)\)'
-                    urls = re.findall(pattern, content)
-                    if urls:
-                        logger.info(f"从 Markdown 提取到 {len(urls)} 张图片，下载第一张...")
-                        return self._download_image(urls[0])
-
-                    # Markdown 图片 Base64: ![xxx](data:image/...)
-                    base64_pattern = r'!\[.*?\]\((data:image\/[^;]+;base64,[^\s\)]+)\)'
-                    base64_urls = re.findall(base64_pattern, content)
-                    if base64_urls:
-                        logger.info("从 Markdown 提取到 Base64 图片数据")
-                        base64_data = base64_urls[0].split(",")[1]
-                        return base64.b64decode(base64_data)
-
-                    # 纯 Base64 data URL
-                    if content.startswith("data:image"):
-                        logger.info("检测到 Base64 图片数据")
-                        base64_data = content.split(",")[1]
-                        return base64.b64decode(base64_data)
-
-                    # 纯 URL
-                    if content.startswith("http://") or content.startswith("https://"):
-                        logger.info("检测到图片 URL")
-                        return self._download_image(content.strip())
+            message = choice.get("message")
+            if isinstance(message, dict):
+                image_bytes = self._extract_image_from_message(message)
+                if image_bytes is not None:
+                    return image_bytes
 
         raise Exception(
             "❌ 无法从 Chat API 响应中提取图片数据\n\n"
@@ -321,6 +313,88 @@ class ImageApiGenerator(ImageGeneratorBase):
             "1. 确认模型名称正确\n"
             "2. 修改提示词后重试"
         )
+
+    def _extract_image_from_message(self, message: Dict[str, Any]) -> Optional[bytes]:
+        """
+        动态解析 assistant message 中的图片数据。
+        优先级：images 字段 > content 字段。
+        """
+        # 1) OpenRouter/Seed 等：message.images[].image_url.url
+        images = message.get("images")
+        if isinstance(images, list) and images:
+            logger.info(f"检测到 message.images，共 {len(images)} 张图片")
+            for item in images:
+                if not isinstance(item, dict):
+                    continue
+                image_url = item.get("image_url")
+                candidate = None
+                if isinstance(image_url, dict):
+                    candidate = image_url.get("url")
+                elif isinstance(image_url, str):
+                    candidate = image_url
+                if not candidate:
+                    continue
+                image_bytes = self._extract_image_from_candidate(candidate)
+                if image_bytes is not None:
+                    return image_bytes
+
+        # 2) content 可能是字符串或数组（多模态）
+        content = message.get("content")
+        if isinstance(content, str):
+            return self._extract_image_from_text(content)
+        if isinstance(content, list):
+            for part in content:
+                if not isinstance(part, dict):
+                    continue
+                # 常见格式：{"type":"image_url","image_url":{"url":"..."}}
+                if part.get("type") == "image_url":
+                    image_url = part.get("image_url")
+                    candidate = image_url.get("url") if isinstance(image_url, dict) else image_url
+                    if candidate:
+                        image_bytes = self._extract_image_from_candidate(candidate)
+                        if image_bytes is not None:
+                            return image_bytes
+                # 文本片段
+                if part.get("type") == "text" and isinstance(part.get("text"), str):
+                    image_bytes = self._extract_image_from_text(part["text"])
+                    if image_bytes is not None:
+                        return image_bytes
+
+        return None
+
+    def _extract_image_from_text(self, text: str) -> Optional[bytes]:
+        """从文本中提取图片（markdown/base64/url）。"""
+        # Markdown 图片 Base64: ![xxx](data:image/...)
+        base64_pattern = r'!\[.*?\]\((data:image\/[^;]+;base64,[^\s\)]+)\)'
+        base64_urls = re.findall(base64_pattern, text)
+        if base64_urls:
+            logger.info("从 Markdown 提取到 Base64 图片数据")
+            return self._extract_image_from_candidate(base64_urls[0])
+
+        # Markdown 图片链接: ![xxx](url)
+        url_pattern = r'!\[.*?\]\((https?://[^\s\)]+)\)'
+        urls = re.findall(url_pattern, text)
+        if urls:
+            logger.info(f"从 Markdown 提取到 {len(urls)} 张图片，下载第一张")
+            return self._extract_image_from_candidate(urls[0])
+
+        # 纯 Base64 data URL 或纯 URL
+        return self._extract_image_from_candidate(text.strip())
+
+    def _extract_image_from_candidate(self, candidate: str) -> Optional[bytes]:
+        """从候选值中提取图片字节，支持 data URL 与 http(s) URL。"""
+        if not candidate or not isinstance(candidate, str):
+            return None
+        if candidate.startswith("data:image"):
+            try:
+                logger.info("检测到 Base64 图片数据")
+                return base64.b64decode(candidate.split(",", 1)[1])
+            except Exception:
+                logger.debug("Base64 图片解码失败", exc_info=True)
+                return None
+        if candidate.startswith("http://") or candidate.startswith("https://"):
+            return self._download_image(candidate)
+        return None
 
     def _download_image(self, url: str) -> bytes:
         """下载图片并返回二进制数据"""

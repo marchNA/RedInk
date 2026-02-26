@@ -132,11 +132,22 @@ class OutlineService:
     def generate_outline(
         self,
         topic: str,
-        images: Optional[List[bytes]] = None
+        images: Optional[List[bytes]] = None,
+        input_mode: str = 'topic'
     ) -> Dict[str, Any]:
         try:
-            logger.info(f"开始生成大纲: topic={topic[:50]}..., images={len(images) if images else 0}")
+            logger.info(
+                f"开始生成大纲: mode={input_mode}, topic={topic[:50]}..., images={len(images) if images else 0}"
+            )
             prompt = self.prompt_template.format(topic=topic)
+
+            if input_mode == 'free_text':
+                free_text_instruction = (
+                    "用户输入的是完整文本素材（可能包含草稿、段落、语气要求、结构要求）。\n"
+                    "请优先基于用户原文进行提炼、重组和扩写，不要把它仅当一个简短主题词。\n"
+                    "保留用户给出的关键观点、语气和约束条件；信息不足时再做合理补充。"
+                )
+                prompt = f"{free_text_instruction}\n\n{prompt}"
 
             if images and len(images) > 0:
                 prompt += f"\n\n注意：用户提供了 {len(images)} 张参考图片，请在生成大纲时考虑这些图片的内容和风格。这些图片可能是产品图、个人照片或场景图，请根据图片内容来优化大纲，使生成的内容与图片相关联。"
