@@ -79,3 +79,10 @@ debug_*.py
 DEV_NOTES.md
 commit_message.txt
 git-changelog.txt
+
+# Local runtime/session data
+.claude/
+backend/data/
+data/
+nul
+极简网页.html
