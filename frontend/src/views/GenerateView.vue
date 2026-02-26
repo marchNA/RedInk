@@ -41,9 +41,23 @@
         <div v-for="image in store.images" :key="image.index" class="image-card">
           <!-- 图片展示区域 -->
           <div v-if="image.url && image.status === 'done'" class="image-preview">
-            <img :src="image.url" :alt="`第 ${image.index + 1} 页`" />
+            <img
+              :src="image.url"
+              :alt="`第 ${image.index + 1} 页`"
+              @click="openPreview(image.url, image.index)"
+            />
             <!-- 重新生成按钮（悬停显示） -->
             <div class="image-overlay">
+              <button
+                class="overlay-btn"
+                @click="openPreview(image.url, image.index)"
+              >
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path>
+                  <circle cx="12" cy="12" r="3"></circle>
+                </svg>
+                预览大图
+              </button>
               <button
                 class="overlay-btn"
                 @click="regenerateImage(image.index)"
@@ -85,11 +99,29 @@
           <!-- 底部信息栏 -->
           <div class="image-footer">
             <span class="page-label">Page {{ image.index + 1 }}</span>
-            <span class="status-badge" :class="image.status">
-              {{ getStatusText(image.status) }}
-            </span>
+            <div class="footer-actions">
+              <button
+                v-if="image.url && image.status === 'done'"
+                class="mini-btn"
+                @click="openPreview(image.url, image.index)"
+              >
+                预览
+              </button>
+              <span class="status-badge" :class="image.status">
+                {{ getStatusText(image.status) }}
+              </span>
+            </div>
           </div>
         </div>
+      </div>
+    </div>
+
+    <!-- 图片预览弹窗 -->
+    <div v-if="previewVisible" class="preview-overlay" @click="closePreview">
+      <div class="preview-content" @click.stop>
+        <button class="preview-close" @click="closePreview">×</button>
+        <div class="preview-title">第 {{ previewIndex + 1 }} 页</div>
+        <img :src="previewUrl" class="preview-image" alt="预览图片" />
       </div>
     </div>
   </div>
@@ -100,12 +132,16 @@ import { ref, computed, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { useGeneratorStore } from '../stores/generator'
 import { generateImagesPost, regenerateImage as apiRegenerateImage, retryFailedImages as apiRetryFailed, createHistory, updateHistory, getImageUrl } from '../api'
+import { truncateTitle } from '../utils/title'
 
 const router = useRouter()
 const store = useGeneratorStore()
 
 const error = ref('')
 const isRetrying = ref(false)
+const previewVisible = ref(false)
+const previewUrl = ref('')
+const previewIndex = ref(0)
 
 const isGenerating = computed(() => store.progress.status === 'generating')
 
@@ -126,6 +162,17 @@ const getStatusText = (status: string) => {
     retrying: '重试中'
   }
   return texts[status] || '等待中'
+}
+
+function openPreview(url: string, index: number) {
+  previewUrl.value = url
+  previewIndex.value = index
+  previewVisible.value = true
+}
+
+function closePreview() {
+  previewVisible.value = false
+  previewUrl.value = ''
 }
 
 // 重试单张图片（异步并发执行，不阻塞）
@@ -291,6 +338,12 @@ onMounted(async () => {
           const thumbnail = generatedImages.length > 0 ? generatedImages[0] : null
 
           await updateHistory(store.recordId, {
+            title: store.content.titles?.length ? truncateTitle(store.content.titles[0]) : undefined,
+            content: store.content.titles?.length ? {
+              titles: store.content.titles,
+              copywriting: store.content.copywriting,
+              tags: store.content.tags
+            } : undefined,
             images: {
               task_id: event.task_id,
               generated: generatedImages
@@ -348,6 +401,8 @@ onMounted(async () => {
   display: flex;
   align-items: center;
   justify-content: center;
+  flex-direction: column;
+  gap: 10px;
   opacity: 0;
   transition: opacity 0.2s;
 }
@@ -378,6 +433,55 @@ onMounted(async () => {
 .overlay-btn:disabled {
   opacity: 0.5;
   cursor: not-allowed;
+}
+
+.preview-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.85);
+  z-index: 1200;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+}
+
+.preview-content {
+  position: relative;
+  max-width: min(90vw, 900px);
+  max-height: 90vh;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+}
+
+.preview-image {
+  max-width: 100%;
+  max-height: calc(90vh - 48px);
+  border-radius: 10px;
+  box-shadow: 0 12px 28px rgba(0, 0, 0, 0.35);
+  object-fit: contain;
+}
+
+.preview-close {
+  position: absolute;
+  top: -42px;
+  right: 0;
+  width: 34px;
+  height: 34px;
+  border: none;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.2);
+  color: white;
+  font-size: 24px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.preview-title {
+  color: white;
+  margin-bottom: 10px;
+  font-size: 14px;
 }
 
 .image-placeholder {
@@ -443,6 +547,27 @@ onMounted(async () => {
   display: flex;
   justify-content: space-between;
   align-items: center;
+}
+
+.footer-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.mini-btn {
+  border: 1px solid var(--border-color);
+  background: white;
+  color: var(--text-main);
+  border-radius: 4px;
+  padding: 2px 8px;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.mini-btn:hover {
+  border-color: var(--primary);
+  color: var(--primary);
 }
 
 .page-label {

@@ -71,6 +71,11 @@ export const imageTypeOptions = [
  * 服务商表单管理 Hook
  */
 export function useProviderForm() {
+  const IMAGE_ENDPOINT_OPTIONS = [
+    '/v1/images/generations',
+    '/v1/chat/completions'
+  ]
+
   // 加载状态
   const loading = ref(true)
   const saving = ref(false)
@@ -353,6 +358,13 @@ export function useProviderForm() {
    * 打开编辑图片服务商弹窗
    */
   function openEditImageModal(name: string, provider: Provider) {
+    let endpointType = provider.endpoint_type || '/v1/images/generations'
+    if (endpointType === 'images') endpointType = '/v1/images/generations'
+    if (endpointType === 'chat') endpointType = '/v1/chat/completions'
+    if (!IMAGE_ENDPOINT_OPTIONS.includes(endpointType)) {
+      endpointType = '/v1/images/generations'
+    }
+
     editingImageProvider.value = name
     imageForm.value = {
       name: name,
@@ -363,7 +375,7 @@ export function useProviderForm() {
       model: provider.model || '',
       high_concurrency: provider.high_concurrency || false,
       short_prompt: provider.short_prompt || false,
-      endpoint_type: provider.endpoint_type || '/v1/images/generations',
+      endpoint_type: endpointType,
       _has_api_key: !!provider.api_key_masked
     }
     showImageModal.value = true
@@ -410,6 +422,10 @@ export function useProviderForm() {
 
     // 如果是 OpenAI 兼容接口，保存 endpoint_type
     if (imageForm.value.type === 'image_api') {
+      if (!IMAGE_ENDPOINT_OPTIONS.includes(imageForm.value.endpoint_type)) {
+        alert('图片 API 端点仅支持 /v1/images/generations 或 /v1/chat/completions')
+        return
+      }
       providerData.endpoint_type = imageForm.value.endpoint_type
     }
 

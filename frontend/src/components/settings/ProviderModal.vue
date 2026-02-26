@@ -184,7 +184,7 @@ const baseUrlPlaceholder = computed(() => {
     case 'google_genai':
       return '例如: https://generativelanguage.googleapis.com'
     default:
-      return '例如: https://api.openai.com'
+      return '例如: https://api.openai.com 或 https://api.deepseek.com'
   }
 })
 
@@ -198,7 +198,7 @@ const modelPlaceholder = computed(() => {
     case 'image_api':
       return '例如: flux-pro'
     default:
-      return '例如: gpt-4o'
+      return '例如: gpt-4o 或 deepseek-chat'
   }
 })
 

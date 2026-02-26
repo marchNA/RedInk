@@ -16,11 +16,15 @@
 
       <!-- 悬浮操作按钮 -->
       <div class="card-overlay">
-        <button class="overlay-btn" @click.stop="$emit('preview', record.id)">
+        <button class="overlay-btn primary" @click.stop="$emit('preview', record.id)">
           预览
         </button>
-        <button class="overlay-btn primary" @click.stop="$emit('edit', record.id)">
-          编辑
+        <button
+          v-if="canContinueGenerate"
+          class="overlay-btn"
+          @click.stop="$emit('continue', record.id)"
+        >
+          继续生成图片
         </button>
       </div>
 
@@ -65,7 +69,7 @@ import { computed } from 'vue'
 interface Record {
   id: string
   title: string
-  status: 'draft' | 'completed' | 'generating'
+  status: 'draft' | 'completed' | 'generating' | 'partial' | 'error'
   page_count: number
   updated_at: string
   thumbnail?: string
@@ -80,9 +84,13 @@ const props = defineProps<{
 // 定义 Emits
 defineEmits<{
   (e: 'preview', id: string): void
-  (e: 'edit', id: string): void
+  (e: 'continue', id: string): void
   (e: 'delete', record: Record): void
 }>()
+
+const canContinueGenerate = computed(() => {
+  return ['draft', 'partial', 'error'].includes(props.record.status)
+})
 
 /**
  * 获取状态文本
@@ -91,7 +99,9 @@ const statusText = computed(() => {
   const map: Record<string, string> = {
     draft: '草稿',
     completed: '已完成',
-    generating: '生成中'
+    generating: '生成中',
+    partial: '部分完成',
+    error: '失败'
   }
   return map[props.record.status] || props.record.status
 })
@@ -234,6 +244,14 @@ const formattedDate = computed(() => {
 
 .status-badge.generating {
   background: rgba(24, 144, 255, 0.9);
+}
+
+.status-badge.partial {
+  background: rgba(250, 173, 20, 0.92);
+}
+
+.status-badge.error {
+  background: rgba(255, 77, 79, 0.92);
 }
 
 /* 底部区域 */

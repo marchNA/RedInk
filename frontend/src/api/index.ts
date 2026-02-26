@@ -30,15 +30,31 @@ export interface FinishEvent {
   images: string[]
 }
 
+export interface DebugImageProviderInfo {
+  active_provider: string
+  type: string
+  model?: string
+  endpoint_type?: string
+}
+
+export interface DebugImageGenerateResponse {
+  success: boolean
+  provider?: DebugImageProviderInfo
+  image_base64?: string
+  error?: string
+}
+
 // 生成大纲（支持图片上传）
 export async function generateOutline(
   topic: string,
-  images?: File[]
+  images?: File[],
+  inputMode: 'topic' | 'free_text' = 'topic'
 ): Promise<OutlineResponse & { has_images?: boolean }> {
   // 如果有图片，使用 FormData
   if (images && images.length > 0) {
     const formData = new FormData()
     formData.append('topic', topic)
+    formData.append('input_mode', inputMode)
     images.forEach((file) => {
       formData.append('images', file)
     })
@@ -57,7 +73,8 @@ export async function generateOutline(
 
   // 无图片，使用 JSON
   const response = await axios.post<OutlineResponse>(`${API_BASE_URL}/outline`, {
-    topic
+    topic,
+    input_mode: inputMode
   })
   return response.data
 }
@@ -67,6 +84,32 @@ export async function generateOutline(
 export function getImageUrl(taskId: string, filename: string, thumbnail: boolean = true): string {
   const thumbParam = thumbnail ? '?thumbnail=true' : '?thumbnail=false'
   return `${API_BASE_URL}/images/${taskId}/${filename}${thumbParam}`
+}
+
+// 调试生图（system + user 文本，user 图片）
+export async function debugGenerateImage(
+  systemPrompt: string,
+  userPrompt: string,
+  userImages: File[] = []
+): Promise<DebugImageGenerateResponse> {
+  const formData = new FormData()
+  formData.append('system_prompt', systemPrompt)
+  formData.append('user_prompt', userPrompt)
+  userImages.forEach((file) => {
+    formData.append('user_images', file)
+  })
+
+  const response = await axios.post<DebugImageGenerateResponse>(
+    `${API_BASE_URL}/debug-image/generate`,
+    formData,
+    {
+      headers: {
+        'Content-Type': 'multipart/form-data'
+      }
+    }
+  )
+
+  return response.data
 }
 
 // 重新生成图片（即使成功的也可以重新生成）
@@ -190,8 +233,15 @@ export interface HistoryRecord {
 export interface HistoryDetail {
   id: string
   title: string
+  input_mode?: 'topic' | 'free_text'
+  raw_input_text?: string
   created_at: string
   updated_at: string
+  content?: {
+    titles: string[]
+    copywriting: string
+    tags: string[]
+  }
   outline: {
     raw: string
     pages: Page[]
@@ -211,12 +261,16 @@ export interface CreateHistoryParams {
   topic: string
   outline: { raw: string; pages: Page[] }
   task_id?: string
+  input_mode?: 'topic' | 'free_text'
+  raw_input_text?: string
 }
 
 /**
  * 更新历史记录参数接口
  */
 export interface UpdateHistoryParams {
+  title?: string
+  content?: { titles: string[]; copywriting: string; tags: string[] }
   outline?: { raw: string; pages: Page[] }
   images?: { task_id: string | null; generated: string[] }
   status?: string
@@ -259,7 +313,10 @@ export interface UpdateHistoryParams {
 export async function createHistory(
   topic: string,
   outline: { raw: string; pages: Page[] },
-  taskId?: string
+  taskId?: string,
+  content?: { titles: string[]; copywriting: string; tags: string[] },
+  inputMode: 'topic' | 'free_text' = 'topic',
+  rawInputText: string = ''
 ): Promise<{ success: boolean; record_id?: string; error?: string }> {
   try {
     const response = await axios.post(
@@ -267,7 +324,10 @@ export async function createHistory(
       {
         topic,
         outline,
-        task_id: taskId
+        task_id: taskId,
+        content,
+        input_mode: inputMode,
+        raw_input_text: rawInputText
       },
       {
         timeout: 10000 // 10秒超时
@@ -791,6 +851,169 @@ export async function generateContent(
   const response = await axios.post<ContentResponse>(`${API_BASE_URL}/content`, {
     topic,
     outline
+  })
+  return response.data
+}
+
+// ==================== 小红书相关 API ====================
+
+export interface AuthStatus {
+  logged_in: boolean
+  user_info: { name: string } | null
+  last_check: string | null
+}
+
+export interface PublishResult {
+  success: boolean
+  note_id?: string
+  url?: string
+  error?: string
+}
+
+export interface RefineResult {
+  success: boolean
+  optimized_title?: string
+  optimized_content?: string
+  tags?: string[]
+  error?: string
+}
+
+export interface BrainstormMessage {
+  role: 'user' | 'assistant'
+  content: string
+}
+
+export interface BrainstormChatResponse {
+  success: boolean
+  assistant_reply?: string
+  next_options?: string[]
+  error?: string
+}
+
+export interface BrainstormComposeResponse {
+  success: boolean
+  topic?: string
+  brief?: string
+  outline?: string
+  pages?: Page[]
+  content?: {
+    titles: string[]
+    copywriting: string
+    tags: string[]
+  }
+  error?: string
+}
+
+// 获取登录状态
+export async function getXhsAuthStatus(): Promise<AuthStatus> {
+  const response = await axios.get<AuthStatus>(`${API_BASE_URL}/auth/status`)
+  return response.data
+}
+
+// 开始扫码登录
+export async function startXhsLogin(): Promise<{ success: boolean; message: string }> {
+  const response = await axios.post<{ success: boolean; message: string }>(`${API_BASE_URL}/auth/login`)
+  return response.data
+}
+
+// 检查登录状态
+export async function checkXhsLogin(): Promise<{
+  logged_in: boolean
+  user_info: { name: string } | null
+}> {
+  const response = await axios.get<{
+    logged_in: boolean
+    user_info: { name: string } | null
+  }>(`${API_BASE_URL}/auth/login/check`)
+  return response.data
+}
+
+// 等待登录完成
+export async function completeXhsLogin(timeout?: number): Promise<{
+  success: boolean
+  user_info: { name: string } | null
+  message: string
+}> {
+  const response = await axios.post<{
+    success: boolean
+    user_info: { name: string } | null
+    message: string
+  }>(`${API_BASE_URL}/auth/login/complete`, { timeout })
+  return response.data
+}
+
+// 退出登录
+export async function logoutXhs(): Promise<{ success: boolean; message: string }> {
+  const response = await axios.post<{ success: boolean; message: string }>(`${API_BASE_URL}/auth/logout`)
+  return response.data
+}
+
+// 发布笔记
+export async function publishNote(data: {
+  title: string
+  content: string
+  image_paths: string[]
+  tags?: string[]
+}): Promise<PublishResult> {
+  const response = await axios.post<PublishResult>(`${API_BASE_URL}/publish`, data)
+  return response.data
+}
+
+// 优化标题
+export async function refineTitle(title: string): Promise<{
+  success: boolean
+  optimized_title?: string
+  error?: string
+}> {
+  const response = await axios.post<{
+    success: boolean
+    optimized_title?: string
+    error?: string
+  }>(`${API_BASE_URL}/refine/title`, { title })
+  return response.data
+}
+
+// 优化正文
+export async function refineContent(content: string): Promise<{
+  success: boolean
+  optimized_content?: string
+  error?: string
+}> {
+  const response = await axios.post<{
+    success: boolean
+    optimized_content?: string
+    error?: string
+  }>(`${API_BASE_URL}/refine/content`, { content })
+  return response.data
+}
+
+// 批量优化
+export async function refineAll(data: {
+  title: string
+  content: string
+}): Promise<RefineResult> {
+  const response = await axios.post<RefineResult>(`${API_BASE_URL}/refine/all`, data)
+  return response.data
+}
+
+// ==================== 创意风暴 API ====================
+
+export async function brainstormChat(
+  messages: BrainstormMessage[],
+  userInput: string
+): Promise<BrainstormChatResponse> {
+  const response = await axios.post<BrainstormChatResponse>(`${API_BASE_URL}/brainstorm/chat`, {
+    messages,
+    user_input: userInput
+  })
+  return response.data
+}
+
+export async function brainstormCompose(
+  messages: BrainstormMessage[]
+): Promise<BrainstormComposeResponse> {
+  const response = await axios.post<BrainstormComposeResponse>(`${API_BASE_URL}/brainstorm/compose`, {
+    messages
   })
   return response.data
 }

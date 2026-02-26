@@ -134,9 +134,14 @@
 </template>
 
 <script setup lang="ts">
-import { ref, computed } from 'vue'
+import { ref, computed, watch } from 'vue'
 import { useGeneratorStore } from '../../stores/generator'
-import { generateContent } from '../../api'
+import { generateContent, updateHistory } from '../../api'
+import { truncateTitle } from '../../utils/title'
+
+const emit = defineEmits<{
+  update: [data: { title: string; content: string; tags: string[] }]
+}>()
 
 const store = useGeneratorStore()
 
@@ -148,6 +153,21 @@ const copiedTitleIndex = ref<number | null>(null)
 const copiedTagIndex = ref<number | null>(null)
 
 const content = computed(() => store.content)
+
+// 监听内容变化，发出更新事件
+watch(
+  () => [content.value.titles, content.value.copywriting, content.value.tags],
+  ([titles, copywriting, tags]) => {
+    if (titles && titles.length > 0 && copywriting && tags && tags.length > 0) {
+      emit('update', {
+        title: titles[0] || '',
+        content: copywriting || '',
+        tags: tags || []
+      })
+    }
+  },
+  { immediate: true, deep: true }
+)
 
 // 格式化文案（按换行分段）
 const formattedCopywriting = computed(() => {
@@ -167,6 +187,22 @@ async function handleGenerate() {
 
     if (result.success && result.titles && result.copywriting && result.tags) {
       store.setContent(result.titles, result.copywriting, result.tags)
+      // 内容生成成功后，立即回写历史记录，避免草稿标题仍停留在原始输入
+      if (store.recordId) {
+        try {
+          const primaryTitle = truncateTitle(store.content.titles?.[0] || store.topic || '')
+          await updateHistory(store.recordId, {
+            title: primaryTitle,
+            content: {
+              titles: store.content.titles,
+              copywriting: store.content.copywriting,
+              tags: store.content.tags
+            }
+          })
+        } catch (e) {
+          console.warn('同步历史记录内容失败:', e)
+        }
+      }
     } else {
       store.setContentError(result.error || '生成失败')
     }

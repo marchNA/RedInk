@@ -13,7 +13,7 @@
         :value="modelValue"
         @input="handleInput"
         class="composer-textarea"
-        placeholder="输入主题，例如：秋季显白美甲..."
+        :placeholder="inputMode === 'free_text' ? '输入完整需求/草稿文本，系统会按你的原文提炼生成...' : '输入主题，例如：秋季显白美甲...'"
         @keydown.enter.prevent="handleEnter"
         :disabled="loading"
         rows="1"
@@ -43,6 +43,16 @@
     <!-- 工具栏 -->
     <div class="composer-toolbar">
       <div class="toolbar-left">
+        <button
+          type="button"
+          class="mode-btn"
+          :class="{ active: inputMode === 'free_text' }"
+          @click="$emit('modeChange', inputMode === 'free_text' ? 'topic' : 'free_text')"
+          :disabled="loading"
+          title="切换输入模式"
+        >
+          {{ inputMode === 'free_text' ? '自由文本模式' : '主题模式' }}
+        </button>
         <label class="tool-btn" :class="{ 'active': uploadedImages.length > 0 }" title="上传参考图">
           <input
             type="file"
@@ -96,6 +106,7 @@ interface UploadedImage {
 const props = defineProps<{
   modelValue: string
   loading: boolean
+  inputMode: 'topic' | 'free_text'
 }>()
 
 // 定义 Emits
@@ -103,6 +114,7 @@ const emit = defineEmits<{
   (e: 'update:modelValue', value: string): void
   (e: 'generate'): void
   (e: 'imagesChange', images: File[]): void
+  (e: 'modeChange', mode: 'topic' | 'free_text'): void
 }>()
 
 // 输入框引用
@@ -324,6 +336,30 @@ defineExpose({
 .toolbar-left {
   display: flex;
   gap: 8px;
+  align-items: center;
+}
+
+.mode-btn {
+  height: 40px;
+  padding: 0 12px;
+  border-radius: 10px;
+  border: 1px solid #e5e5e5;
+  background: #fff;
+  color: #666;
+  font-size: 13px;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.mode-btn:hover:not(:disabled) {
+  border-color: #ffccd5;
+  color: var(--primary, #ff2442);
+}
+
+.mode-btn.active {
+  background: rgba(255, 36, 66, 0.1);
+  border-color: rgba(255, 36, 66, 0.3);
+  color: var(--primary, #ff2442);
 }
 
 .tool-btn {

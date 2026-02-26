@@ -18,13 +18,35 @@
       </div>
 
       <!-- 主题输入组合框 -->
+      <div class="mode-switch">
+        <button
+          class="mode-btn"
+          :class="{ active: creationMode === 'compose' }"
+          @click="creationMode = 'compose'"
+        >
+          创作输入
+        </button>
+        <button
+          class="mode-btn"
+          :class="{ active: creationMode === 'brainstorm' }"
+          @click="creationMode = 'brainstorm'"
+        >
+          创意风暴
+        </button>
+      </div>
+
       <ComposerInput
+        v-show="creationMode === 'compose'"
         ref="composerRef"
         v-model="topic"
+        :inputMode="inputMode"
         :loading="loading"
         @generate="handleGenerate"
         @imagesChange="handleImagesChange"
+        @modeChange="handleModeChange"
       />
+
+      <BrainstormPanel v-show="creationMode === 'brainstorm'" embedded />
     </div>
 
     <!-- 版权信息 -->
@@ -57,12 +79,15 @@ import { generateOutline, createHistory } from '../api'
 // 引入组件
 import ShowcaseBackground from '../components/home/ShowcaseBackground.vue'
 import ComposerInput from '../components/home/ComposerInput.vue'
+import BrainstormPanel from '../components/home/BrainstormPanel.vue'
 
 const router = useRouter()
 const store = useGeneratorStore()
 
 // 状态
 const topic = ref('')
+const creationMode = ref<'compose' | 'brainstorm'>('compose')
+const inputMode = ref<'topic' | 'free_text'>('topic')
 const loading = ref(false)
 const error = ref('')
 const composerRef = ref<InstanceType<typeof ComposerInput> | null>(null)
@@ -75,6 +100,10 @@ const uploadedImageFiles = ref<File[]>([])
  */
 function handleImagesChange(images: File[]) {
   uploadedImageFiles.value = images
+}
+
+function handleModeChange(mode: 'topic' | 'free_text') {
+  inputMode.value = mode
 }
 
 /**
@@ -91,7 +120,8 @@ async function handleGenerate() {
 
     const result = await generateOutline(
       topic.value.trim(),
-      imageFiles.length > 0 ? imageFiles : undefined
+      imageFiles.length > 0 ? imageFiles : undefined,
+      inputMode.value
     )
 
     if (result.success && result.pages) {
@@ -107,7 +137,11 @@ async function handleGenerate() {
           {
             raw: result.outline || '',
             pages: result.pages
-          }
+          },
+          undefined,
+          undefined,
+          inputMode.value,
+          inputMode.value === 'free_text' ? topic.value.trim() : ''
         )
 
         // 保存历史记录 ID 到 store，后续生成正文和图片时会使用
@@ -196,6 +230,33 @@ async function handleGenerate() {
   font-size: 16px;
   color: var(--text-sub);
   margin-top: 12px;
+}
+
+.mode-switch {
+  display: inline-flex;
+  gap: 8px;
+  margin: 8px 0 20px;
+  padding: 4px;
+  border-radius: 999px;
+  background: #f5f6f8;
+  border: 1px solid var(--border-color);
+}
+
+.mode-btn {
+  border: 0;
+  background: transparent;
+  color: var(--text-sub);
+  border-radius: 999px;
+  padding: 8px 16px;
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.mode-btn.active {
+  background: #fff;
+  color: var(--text-main);
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.08);
 }
 
 /* Page Footer */

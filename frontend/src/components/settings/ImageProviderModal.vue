@@ -80,15 +80,17 @@
         <!-- 端点路径（仅 OpenAI 兼容接口） -->
         <div class="form-group" v-if="showEndpointType">
           <label>API 端点路径</label>
-          <input
-            type="text"
-            class="form-input"
+          <select
+            class="form-select"
             :value="formData.endpoint_type"
-            @input="updateField('endpoint_type', ($event.target as HTMLInputElement).value)"
-            placeholder="例如: /v1/images/generations 或 /v1/chat/completions"
-          />
+            @change="updateField('endpoint_type', ($event.target as HTMLSelectElement).value)"
+          >
+            <option v-for="endpoint in endpointOptions" :key="endpoint" :value="endpoint">
+              {{ endpoint }}
+            </option>
+          </select>
           <span class="form-hint">
-            常用端点：/v1/images/generations（标准图片生成）、/v1/chat/completions（即梦等返回链接的 API）
+            仅支持两个端点：标准图片接口或 Chat 接口。
           </span>
         </div>
 
@@ -212,6 +214,11 @@ const showBaseUrl = computed(() => {
 const showEndpointType = computed(() => {
   return props.formData.type === 'image_api'
 })
+
+const endpointOptions = [
+  '/v1/images/generations',
+  '/v1/chat/completions'
+]
 
 // 模型占位符
 const modelPlaceholder = computed(() => {

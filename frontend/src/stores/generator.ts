@@ -15,6 +15,7 @@
  */
 import { defineStore } from 'pinia'
 import type { Page } from '../api'
+import { truncateTitles } from '../utils/title'
 
 /**
  * 生成的图片信息
@@ -455,7 +456,7 @@ export const useGeneratorStore = defineStore('generator', {
      * @param tags 标签列表
      */
     setContent(titles: string[], copywriting: string, tags: string[]) {
-      this.content.titles = titles
+      this.content.titles = truncateTitles(titles)
       this.content.copywriting = copywriting
       this.content.tags = tags
       this.content.status = 'done'

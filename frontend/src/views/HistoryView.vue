@@ -83,7 +83,7 @@
         :key="record.id"
         :record="record"
         @preview="viewImages"
-        @edit="loadRecord"
+        @continue="loadRecord"
         @delete="confirmDelete"
       />
     </div>
@@ -103,9 +103,12 @@
       :regeneratingImages="regeneratingImages"
       @close="closeGallery"
       @showOutline="showOutlineModal = true"
+      @publish="openPublishModal"
+      @continueGenerate="handleContinueGenerate"
       @regenerate="regenerateHistoryImage"
       @downloadAll="downloadAllImages"
       @download="downloadImage"
+      @saveContent="saveRecordContent"
     />
 
     <!-- 大纲查看模态框 -->
@@ -116,11 +119,23 @@
       @close="showOutlineModal = false"
     />
 
+    <PublishModal
+      v-if="viewingRecord"
+      :visible="showPublishModal"
+      :images="publishImages"
+      :initialTitles="publishTitles"
+      :initialTitle="publishTitle"
+      :initialContent="publishContent"
+      :initialTags="publishTags"
+      @close="showPublishModal = false"
+      @published="handlePublished"
+    />
+
   </div>
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted } from 'vue'
+import { ref, onMounted, computed } from 'vue'
 import { useRouter, useRoute } from 'vue-router'
 import {
   getHistoryList,
@@ -129,9 +144,11 @@ import {
   deleteHistory,
   getHistory,
   type HistoryRecord,
+  generateContent,
   regenerateImage as apiRegenerateImage,
   updateHistory,
-  scanAllTasks
+  scanAllTasks,
+  getImageUrl
 } from '../api'
 import { useGeneratorStore } from '../stores/generator'
 
@@ -140,6 +157,8 @@ import StatsOverview from '../components/history/StatsOverview.vue'
 import GalleryCard from '../components/history/GalleryCard.vue'
 import ImageGalleryModal from '../components/history/ImageGalleryModal.vue'
 import OutlineModal from '../components/history/OutlineModal.vue'
+import PublishModal from '../components/result/PublishModal.vue'
+import { truncateTitle } from '../utils/title'
 
 const router = useRouter()
 const route = useRoute()
@@ -158,6 +177,7 @@ const totalPages = ref(1)
 const viewingRecord = ref<any>(null)
 const regeneratingImages = ref<Set<number>>(new Set())
 const showOutlineModal = ref(false)
+const showPublishModal = ref(false)
 const isScanning = ref(false)
 
 /**
@@ -227,6 +247,16 @@ async function loadRecord(id: string) {
     store.setTopic(res.record.title)
     store.setOutline(res.record.outline.raw, res.record.outline.pages)
     store.setRecordId(res.record.id)
+    if (res.record.content) {
+      store.setContent(
+        res.record.content.titles || [],
+        res.record.content.copywriting || '',
+        res.record.content.tags || []
+      )
+    } else {
+      store.clearContent()
+    }
+
     if (res.record.images.generated.length > 0) {
       store.taskId = res.record.images.task_id
       store.images = res.record.outline.pages.map((page, idx) => {
@@ -238,9 +268,17 @@ async function loadRecord(id: string) {
           retryable: !filename
         }
       })
+    } else {
+      store.taskId = null
+      store.images = []
     }
     router.push('/outline')
   }
+}
+
+function handleContinueGenerate() {
+  if (!viewingRecord.value?.id) return
+  loadRecord(viewingRecord.value.id)
 }
 
 /**
@@ -257,6 +295,82 @@ async function viewImages(id: string) {
 function closeGallery() {
   viewingRecord.value = null
   showOutlineModal.value = false
+  showPublishModal.value = false
+}
+
+const publishImages = computed(() => {
+  if (!viewingRecord.value?.images?.task_id || !Array.isArray(viewingRecord.value?.images?.generated)) {
+    return []
+  }
+  return viewingRecord.value.images.generated
+    .filter((filename: string) => !!filename)
+    .map((filename: string) => ({
+      url: window.location.origin + getImageUrl(viewingRecord.value.images.task_id, filename, false)
+    }))
+})
+
+const publishTitle = computed(() => {
+  if (!viewingRecord.value) return ''
+  return truncateTitle(viewingRecord.value.content?.titles?.[0] || viewingRecord.value.title || '')
+})
+
+const publishTitles = computed(() => {
+  if (!viewingRecord.value) return []
+  const titles = viewingRecord.value.content?.titles
+  if (Array.isArray(titles) && titles.length > 0) return titles.map((t: string) => truncateTitle(t))
+  return publishTitle.value ? [publishTitle.value] : []
+})
+
+const publishContent = computed(() => {
+  if (!viewingRecord.value) return ''
+  return viewingRecord.value.content?.copywriting || ''
+})
+
+const publishTags = computed(() => {
+  if (!viewingRecord.value) return []
+  return viewingRecord.value.content?.tags || []
+})
+
+async function openPublishModal() {
+  if (!viewingRecord.value) return
+  if (publishImages.value.length === 0) {
+    alert('当前记录没有可发布图片')
+    return
+  }
+
+  // 兼容旧记录：若缺少文案数据，按当前大纲自动补生成一次并落库
+  if (!publishContent.value && publishTitles.value.length === 0) {
+    try {
+      const result = await generateContent(
+        viewingRecord.value.title || '小红书图文',
+        viewingRecord.value.outline?.raw || ''
+      )
+
+      if (result.success) {
+        const generated = {
+          titles: result.titles || [],
+          copywriting: result.copywriting || '',
+          tags: result.tags || []
+        }
+        viewingRecord.value.content = generated
+        await updateHistory(viewingRecord.value.id, {
+          title: generated.titles[0] || viewingRecord.value.title,
+          content: generated
+        })
+      }
+    } catch (e) {
+      console.error('补生成发布文案失败:', e)
+    }
+  }
+
+  showPublishModal.value = true
+}
+
+function handlePublished(result: { note_id: string; url: string }) {
+  showPublishModal.value = false
+  if (result.url) {
+    alert(`发布成功！\n链接：${result.url}`)
+  }
 }
 
 /**
@@ -354,6 +468,40 @@ function downloadAllImages() {
   const link = document.createElement('a')
   link.href = `/api/history/${viewingRecord.value.id}/download`
   link.click()
+}
+
+/**
+ * 保存记录的内容修改
+ */
+async function saveRecordContent(data: { title: string; content: string; tags: string[] }) {
+  if (!viewingRecord.value) return
+
+  try {
+    const safeTitle = truncateTitle(data.title)
+    await updateHistory(viewingRecord.value.id, {
+      title: safeTitle,
+      content: {
+        titles: [safeTitle],
+        copywriting: data.content,
+        tags: data.tags
+      }
+    })
+
+    // 更新本地状态
+    viewingRecord.value.title = safeTitle
+    if (!viewingRecord.value.content) {
+      viewingRecord.value.content = { titles: [], copywriting: '', tags: [] }
+    }
+    viewingRecord.value.content.titles = [safeTitle]
+    viewingRecord.value.content.copywriting = data.content
+    viewingRecord.value.content.tags = data.tags
+
+    // 刷新列表
+    await loadData()
+  } catch (e: any) {
+    console.error('保存失败:', e)
+    alert('保存失败: ' + (e.message || '未知错误'))
+  }
 }
 
 /**

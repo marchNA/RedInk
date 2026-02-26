@@ -9,6 +9,14 @@
         <button class="btn" @click="startOver" style="background: white; border: 1px solid var(--border-color);">
           再来一篇
         </button>
+        <button class="btn" @click="showRefineModal = true" style="background: white; border: 1px solid var(--border-color);">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2L2 7l10 5 10-5-10-5z"></path><path d="M2 17l10 5 10-5"></path><path d="M2 12l10 5 10-5"></path></svg>
+          内容调优
+        </button>
+        <button class="btn" @click="showPublishModal = true" style="background: white; border: 1px solid var(--border-color);">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"></path><polyline points="22,6 12,13 2,6"></polyline></svg>
+          发布笔记
+        </button>
         <button class="btn btn-primary" @click="downloadAll">
           <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="7 10 12 15 17 10"></polyline><line x1="12" y1="15" x2="12" y2="3"></line></svg>
           一键下载
@@ -67,7 +75,28 @@
     </div>
 
     <!-- 标题、文案、标签生成区域 -->
-    <ContentDisplay />
+    <ContentDisplay @update="handleContentUpdate" />
+
+    <!-- 发布弹窗 -->
+    <PublishModal 
+      :visible="showPublishModal"
+      :images="store.images"
+      :initialTitle="contentTitle"
+      :initialContent="contentBody"
+      :initialTags="contentTags"
+      @close="showPublishModal = false"
+      @published="handlePublished"
+    />
+
+    <!-- 内容调优弹窗 -->
+    <RefineModal
+      :visible="showRefineModal"
+      :initialTitle="contentTitle"
+      :initialContent="contentBody"
+      :initialTags="contentTags"
+      @close="showRefineModal = false"
+      @apply="handleRefineApply"
+    />
   </div>
 </template>
 
@@ -93,10 +122,37 @@ import { useRouter } from 'vue-router'
 import { useGeneratorStore } from '../stores/generator'
 import { regenerateImage } from '../api'
 import ContentDisplay from '../components/result/ContentDisplay.vue'
+import PublishModal from '../components/result/PublishModal.vue'
+import RefineModal from '../components/result/RefineModal.vue'
+import { truncateTitle } from '../utils/title'
 
 const router = useRouter()
 const store = useGeneratorStore()
 const regeneratingIndex = ref<number | null>(null)
+
+const showPublishModal = ref(false)
+const showRefineModal = ref(false)
+const contentTitle = ref('')
+const contentBody = ref('')
+const contentTags = ref<string[]>([])
+
+const handleContentUpdate = (data: { title: string; content: string; tags: string[] }) => {
+  contentTitle.value = truncateTitle(data.title)
+  contentBody.value = data.content
+  contentTags.value = data.tags
+}
+
+const handlePublished = (result: { note_id: string; url: string }) => {
+  if (result.url) {
+    alert(`发布成功！\n链接：${result.url}`)
+  }
+}
+
+const handleRefineApply = (data: { title: string; content: string; tags: string[] }) => {
+  contentTitle.value = truncateTitle(data.title)
+  contentBody.value = data.content
+  contentTags.value = data.tags
+}
 
 const viewImage = (url: string) => {
   const baseUrl = url.split('?')[0]
