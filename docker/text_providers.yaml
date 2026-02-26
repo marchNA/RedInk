@@ -9,3 +9,10 @@ providers:
     model: gpt-4o
     temperature: 1
     type: openai_compatible
+  deepseek:
+    api_key: ""
+    base_url: https://api.deepseek.com/v1
+    max_output_tokens: 8000
+    model: deepseek-chat
+    temperature: 1
+    type: openai_compatible

@@ -1,130 +1,140 @@
 @echo off
-chcp 65001 >nul 2>&1
-setlocal EnableDelayedExpansion
+setlocal EnableExtensions EnableDelayedExpansion
 
-:: 红墨 AI图文生成器 - Windows 启动脚本
+cd /d "%~dp0\.." || exit /b 1
+set "UV_CACHE_DIR=%CD%\.uv-cache"
+set "UV_PROJECT_ENVIRONMENT=%CD%\.uv-venv"
+set "PIP_CACHE_DIR=%CD%\.pip-cache"
+set "TMP=%CD%\.tmp"
+set "TEMP=%TMP%"
 
-title 红墨 AI图文生成器
+if not exist "%UV_CACHE_DIR%" mkdir "%UV_CACHE_DIR%" >nul 2>&1
+if not exist "%UV_PROJECT_ENVIRONMENT%" mkdir "%UV_PROJECT_ENVIRONMENT%" >nul 2>&1
+if not exist "%PIP_CACHE_DIR%" mkdir "%PIP_CACHE_DIR%" >nul 2>&1
+if not exist "%TMP%" mkdir "%TMP%" >nul 2>&1
 
-cd /d "%~dp0\.."
-
-cls
 echo.
-echo ╔═══════════════════════════════════════════════╗
-echo ║     🪟 红墨 AI图文生成器 - Windows 版         ║
-echo ╚═══════════════════════════════════════════════╝
+echo ==========================================
+echo   RedInk Launcher (Windows)
+echo ==========================================
 echo.
 
-:: ========== 环境检查 ==========
-echo [INFO] 检查环境依赖...
-echo.
+echo [INFO] Checking prerequisites...
 
-:: Python
 where python >nul 2>&1
-if %ERRORLEVEL% neq 0 (
-    echo [ERROR] Python 未安装！
-    echo         请从 https://www.python.org/downloads/ 下载安装
-    echo         安装时请勾选 "Add Python to PATH"
-    pause
+if errorlevel 1 (
+    echo [ERROR] Python not found in PATH.
     exit /b 1
 )
-for /f "tokens=*" %%i in ('python --version 2^>^&1') do set PYTHON_VER=%%i
-echo   [OK] %PYTHON_VER%
 
-:: uv
 where uv >nul 2>&1
-if %ERRORLEVEL% equ 0 (
-    for /f "tokens=*" %%i in ('uv --version 2^>^&1') do set UV_VER=%%i
-    echo   [OK] uv !UV_VER!
-    set USE_UV=1
+if errorlevel 1 (
+    set "USE_UV=0"
+    echo [WARN] uv not found, fallback to pip.
 ) else (
-    echo   [!] uv 未安装 ^(推荐: pip install uv^)
-    set USE_UV=0
+    set "USE_UV=1"
 )
 
-:: pnpm / npm
 where pnpm >nul 2>&1
-if %ERRORLEVEL% equ 0 (
-    for /f "tokens=*" %%i in ('pnpm --version') do set PNPM_VER=%%i
-    echo   [OK] pnpm !PNPM_VER!
-    set PKG_MANAGER=pnpm
-) else (
+if errorlevel 1 (
     where npm >nul 2>&1
-    if %ERRORLEVEL% equ 0 (
-        for /f "tokens=*" %%i in ('npm --version') do set NPM_VER=%%i
-        echo   [!] npm !NPM_VER! ^(建议: npm i -g pnpm^)
-        set PKG_MANAGER=npm
-    ) else (
-        echo   [ERROR] Node.js 未安装！
-        echo           请从 https://nodejs.org/ 下载安装
-        pause
+    if errorlevel 1 (
+        echo [ERROR] pnpm/npm not found in PATH.
         exit /b 1
+    )
+    set "PKG_MANAGER=npm"
+) else (
+    set "PKG_MANAGER=pnpm"
+)
+
+echo [INFO] Installing backend dependencies...
+set "BACKEND_READY=0"
+set "DEPS_WARN=0"
+if "!USE_UV!"=="1" (
+    uv sync
+    if !ERRORLEVEL! equ 0 (
+        set "BACKEND_READY=1"
+    ) else (
+        echo [WARN] uv sync failed, fallback to pip.
     )
 )
 
-echo.
-
-:: ========== 安装依赖 ==========
-echo [INFO] 检查项目依赖...
-
-:: 后端依赖
-if %USE_UV% equ 1 (
-    echo   → 后端依赖 ^(uv^)
-    uv sync
-) else (
-    echo   → 后端依赖 ^(pip^)
+if "!BACKEND_READY!"=="0" (
     pip install -e . -q
+    if errorlevel 1 (
+        echo [WARN] Backend dependency install failed, continue startup.
+        set "DEPS_WARN=1"
+    ) else (
+        set "USE_UV=0"
+    )
 )
-echo   [OK] 后端依赖完成
 
-:: 前端依赖
-echo   → 前端依赖
-cd frontend
-if not exist "node_modules\" (
-    echo     正在安装前端依赖，请稍候...
-    %PKG_MANAGER% install
+echo [INFO] Installing frontend dependencies (if needed)...
+pushd frontend
+if not exist node_modules (
+    call %PKG_MANAGER% install
+    if errorlevel 1 (
+        popd
+        echo [WARN] Frontend dependency install failed, continue startup.
+        set "DEPS_WARN=1"
+        goto :START_SERVICES
+    )
 )
-echo   [OK] 前端依赖完成
-cd ..
+popd
 
-echo.
+:START_SERVICES
+echo [INFO] Closing old RedInk service windows...
+taskkill /FI "WINDOWTITLE eq RedInk-Backend-12398*" /T /F >nul 2>&1
+taskkill /FI "WINDOWTITLE eq RedInk-Backend-12398-Fallback*" /T /F >nul 2>&1
+taskkill /FI "WINDOWTITLE eq RedInk-Frontend-5173*" /T /F >nul 2>&1
 
-:: ========== 启动服务 ==========
-echo [INFO] 启动服务...
-echo.
-
-:: 启动后端 (新窗口，蓝色背景)
-if %USE_UV% equ 1 (
-    start "红墨-后端-12398" cmd /k "color 1F && title 红墨 后端服务 [12398] && uv run python backend/app.py"
+echo [INFO] Starting backend service...
+if exist "%CD%\.venv\Scripts\python.exe" (
+    set "BACKEND_PY=%CD%\.venv\Scripts\python.exe"
 ) else (
-    start "红墨-后端-12398" cmd /k "color 1F && title 红墨 后端服务 [12398] && python backend/app.py"
+    set "BACKEND_PY=python"
+)
+start "RedInk-Backend-12398" "!BACKEND_PY!" -m backend.app
+
+call :WAIT_FOR_PORT 12398 15
+if errorlevel 1 (
+    echo [ERROR] Backend failed to start on port 12398.
+    exit /b 1
 )
 
-:: 等待后端启动
-echo   等待后端启动...
-timeout /t 3 /nobreak >nul
+echo [INFO] Starting frontend service...
+set "FRONTEND_DIR=%CD%\frontend"
+start "RedInk-Frontend-5173" /D "%FRONTEND_DIR%" cmd /k "title RedInk Frontend [5173] && call %PKG_MANAGER% run dev"
 
-:: 启动前端 (新窗口，绿色背景)
-cd frontend
-start "红墨-前端-5173" cmd /k "color 2F && title 红墨 前端服务 [5173] && %PKG_MANAGER% run dev"
-cd ..
-
-:: 等待前端启动
-timeout /t 3 /nobreak >nul
+call :WAIT_FOR_PORT 5173 20
+if errorlevel 1 (
+    echo [ERROR] Frontend failed to start on port 5173.
+    exit /b 1
+)
 
 echo.
-echo ╔═══════════════════════════════════════════════╗
-echo ║         🎉 服务启动成功！                     ║
-echo ╠═══════════════════════════════════════════════╣
-echo ║  🌐 前端: http://localhost:5173              ║
-echo ║  🔧 后端: http://localhost:12398             ║
-echo ╠═══════════════════════════════════════════════╣
-echo ║  已打开两个服务窗口，关闭它们即可停止服务    ║
-echo ╚═══════════════════════════════════════════════╝
+echo [OK] Services started.
+echo [OK] Frontend: http://localhost:5173
+echo [OK] Backend : http://localhost:12398
+if "!DEPS_WARN!"=="1" (
+    echo [WARN] One or more dependency install steps failed.
+)
 echo.
 
-:: 自动打开浏览器
-start http://localhost:5173
+if /I not "%NO_BROWSER%"=="1" (
+    start "" "http://localhost:5173" >nul 2>&1
+)
 
-echo 按任意键关闭此窗口（服务会继续运行）...
-pause >nul
+exit /b 0
+
+:WAIT_FOR_PORT
+set "PORT=%~1"
+set "RETRIES=%~2"
+:WAIT_LOOP
+for /f %%A in ('netstat -ano ^| findstr /R /C:":%PORT% .*LISTENING"') do (
+    exit /b 0
+)
+set /a RETRIES-=1
+if !RETRIES! LEQ 0 exit /b 1
+timeout /t 1 /nobreak >nul
+goto :WAIT_LOOP

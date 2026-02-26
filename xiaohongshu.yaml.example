@@ -1,0 +1,18 @@
+# 小红书配置
+
+# 是否启用小红书发布功能
+enabled: true
+
+# 浏览器设置
+browser:
+  # 浏览器类型 (chromium, firefox, webkit)
+  browser_type: chromium
+  # 是否无头模式 (调试时建议设为 false)
+  headless: false
+
+# 发布设置
+publish:
+  # 默认标签（发布时自动添加）
+  default_tags: []
+  # 是否自动保存 cookies
+  save_cookies: true
